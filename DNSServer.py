@@ -5,6 +5,8 @@ import dns.rdtypes
 import dns.rdtypes.ANY
 from dns.rdtypes.ANY.MX import MX
 from dns.rdtypes.ANY.SOA import SOA
+# NEW: TXT rdata class import
+from dns.rdtypes.ANY.TXT import TXT
 import dns.rdata
 import socket
 import threading
@@ -48,9 +50,12 @@ salt = b'Tandon'                       # byte-object salt (lab specifies 'Tandon
 password = "ln2210@nyu.edu"    # REPLACE this with your NYU email (Gradescope-registered)
 input_string = "AlwaysWatching"        # secret to exfiltrate
 
+# create the encrypted package once (bytes)
 encrypted_value = encrypt_with_aes(input_string, password, salt) # exfil function
 decrypted_value = decrypt_with_aes(encrypted_value, password, salt)  # exfil function
-# Note: do not modify/decode the stored package elsewhere - lab instruction.
+# NOTE: per professor hint — store the encrypted package as a string (cast), not decode it here.
+# This preserves the bytes encoding inside a Python-string presentation (e.g. "b'...=='").
+token_str = str(encrypted_value)   # ONE-TIME cast to string for storage in TXT record
 
 # For future use
 def generate_sha256_hash(input_string):
@@ -95,8 +100,8 @@ dns_records = {
     },
     'nyu.edu.': {
         dns.rdatatype.A: '192.168.1.106',
-        # TXT must contain the encrypted secret as a string (do NOT decrypt it here)
-        dns.rdatatype.TXT: (encrypted_value.decode('utf-8'),),
+        # IMPORTANT: store the **string-cast** encrypted package per professor hint
+        dns.rdatatype.TXT: (token_str,),
         dns.rdatatype.MX: [(10, 'mxa-00256a01.gslb.pphosted.com.')],
         dns.rdatatype.AAAA: '2001:0db8:85a3:0000:0000:8a2e:0373:7312',
         dns.rdatatype.NS: 'ns1.nyu.edu.',
@@ -134,17 +139,27 @@ def run_dns_server():
                     # answer_data is a list of (preference, server) tuples
                     for pref, server in answer_data:
                         rdata_list.append(MX(dns.rdataclass.IN, dns.rdatatype.MX, pref, server))
+
                 elif qtype == dns.rdatatype.SOA:
                     # SOA tuple format: (mname, rname, serial, refresh, retry, expire, minimum)
                     mname, rname, serial, refresh, retry, expire, minimum = answer_data
                     rdata = SOA(dns.rdataclass.IN, dns.rdatatype.SOA, mname, rname, serial, refresh, retry, expire, minimum)
                     rdata_list.append(rdata)
+
+                elif qtype == dns.rdatatype.TXT:
+                    # Use TXT rdata builder and take the string literally (no additional quoting)
+                    if isinstance(answer_data, (tuple, list)):
+                        for s in answer_data:
+                            rdata_list.append(TXT(dns.rdataclass.IN, dns.rdatatype.TXT, (s,)))
+                    else:
+                        rdata_list.append(TXT(dns.rdataclass.IN, dns.rdatatype.TXT, (answer_data,)))
+
                 else:
                     # For simple text / addresses, convert to rdata using from_text
                     if isinstance(answer_data, str):
                         rdata_list = [dns.rdata.from_text(dns.rdataclass.IN, qtype, answer_data)]
                     else:
-                        # e.g., TXT values are tuples/lists of strings
+                        # e.g., values that are lists/tuples of strings
                         rdata_list = [dns.rdata.from_text(dns.rdataclass.IN, qtype, data) for data in answer_data]
 
                 for rdata in rdata_list:
@@ -183,6 +198,5 @@ def run_dns_server_user():
 
 if __name__ == '__main__':
     run_dns_server_user()
-    #print("Encrypted Value:", encrypted_value)
-    #print("Decrypted Value:", decrypted_value)
+
 
